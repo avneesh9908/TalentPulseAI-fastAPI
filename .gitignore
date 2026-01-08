@@ -1,0 +1,317 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+.virtualenv/
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+.idea_modules/
+
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+test.db
+instance/
+
+# Alembic
+alembic.ini.bak
+
+# Logs
+*.log
+logs/
+*.log.*
+log/
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre
+.pyre/
+
+# pytype
+.pytype/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath
+*.sage.py
+
+# Spyder
+.spyderproject
+.spyproject
+
+# Rope
+.ropeproject
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Uploaded Files
+uploads/
+static/uploads/
+media/
+static/media/
+
+# Resume Files
+resumes/
+static/resumes/
+
+# Video Recordings
+recordings/
+videos/
+static/recordings/
+
+# Reports
+reports/
+generated_reports/
+
+# Temporary Files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Backup Files
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+
+# Redis Dump
+dump.rdb
+
+# SSL Certificates (keep templates, ignore actual certs)
+*.pem
+*.key
+*.crt
+*.csr
+*.cer
+ssl/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+.docker/
+
+# Kubernetes
+*.kubeconfig
+
+# Package Manager
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Performance/Profiling
+.prof
+*.prof
+
+# Documentation Build
+docs/_build/
+docs/.buildinfo
+
+# Sphinx
+docs/_build
+docs/_static
+docs/_templates
+
+# AI/ML Model Files (if you store them locally)
+*.h5
+*.pkl
+*.pickle
+*.joblib
+*.model
+models/
+*.pt
+*.pth
+*.onnx
+
+# AWS
+.aws/
+
+# Google Cloud
+.gcloud/
+*-service-account.json
+service-account*.json
+
+# Azure
+.azure/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Secrets (extra safety)
+secrets/
+*.secret
+*_secret.*
+credentials.json
+service_credentials.json
+
+# Large Data Files
+*.csv.gz
+*.parquet
+*.feather
+data/raw/
+data/processed/
+
+# Cache
+.cache/
+*.cache
+
+# Node.js (if you add any JS tooling)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Editor Configs (optional - uncomment if needed)
+# .editorconfig
+# .prettierrc
+# .eslintrc
+
+# OS-specific
+*.swp
+*~.nib
+local.properties
+.classpath
+.project
+.settings/
+
+# FastAPI specific
+.fastapi_cache/
+
+# Monitoring/APM
+newrelic.ini
+elastic-apm.yml
+
+# Email templates (if you generate them)
+email_templates/generated/
+
+# QR Codes or generated images
+qrcodes/
+generated_images/
+
+# Archive files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# SQL dumps
+*.sql
+*.dump
+
+# Keep these files (exceptions)
+!.env.example
+!.gitkeep
+!README.md
+!LICENSE
+!requirements.txt
+!alembic.ini
+!docker-compose.yml
+!Dockerfile
+!.dockerignore
