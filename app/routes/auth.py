@@ -6,7 +6,7 @@ from app.database.deps import get_db
 
 router = APIRouter()
 
-@router.post("/signup")
+@router.post("/register")
 def signup(data: UserCreate, db: Session = Depends(get_db)):
     return signup_user(data, db)
 

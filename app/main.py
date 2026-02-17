@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.routes import auth, user
 from app.database.db import engine, Base
-from app.models import user
+import app.models.user  # 👈 sirf table register karne ke liye
 
 app = FastAPI()
 
