@@ -5,7 +5,7 @@ uvicorn[standard]==0.27.1
 SQLAlchemy==2.0.25
 
 # Auth & Security
-passlib==1.7.4
+passlib[bcrypt]==1.7.4
 bcrypt==3.2.2
 python-jose==3.3.0
 
@@ -15,3 +15,5 @@ pydantic-settings==2.1.0
 
 # Multipart
 python-multipart==0.0.9
+
+psycopg2-binary==2.9.9
