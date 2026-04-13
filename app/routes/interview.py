@@ -5,55 +5,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database.deps import get_db
 from app.dependencies.auth import get_current_user
+from app.models.interview import Interview
 from app.models.user import User
 from datetime import datetime
-from typing import Optional, List
+from app.schemas.interview_schema import InterviewSetupRequest, InterviewSetupResponse
 
 router = APIRouter()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TYPES (temporary - move to schemas later)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class InterviewSetupRequest:
-    """Unified request for interview setup (combining 3 steps into 1)"""
-    def __init__(
-        self,
-        experience: str,
-        difficulty: str,
-        skills: List[str],
-        role: str,
-        profile_option: str,  # "existing" or "upload"
-        setup_id: int = 0,
-        profile_id: Optional[str] = None,
-    ):
-        self.setup_id = setup_id
-        self.experience = experience
-        self.difficulty = difficulty
-        self.skills = skills
-        self.role = role
-        self.profile_option = profile_option
-        self.profile_id = profile_id
-
-
-class InterviewSetupResponse:
-    """Interview session created"""
-    def __init__(self, interview_id: str, setup_id: int, status: str):
-        self.interview_id = interview_id
-        self.setup_id = setup_id
-        self.status = status
-        self.started_at = datetime.utcnow().isoformat()
-        self.message = "Interview session initialized successfully"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.post("/setup")
+@router.post("/setup", response_model=InterviewSetupResponse)
 def setup_interview(
-    payload: dict,
+    payload: InterviewSetupRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -66,7 +32,7 @@ def setup_interview(
         "experience": "1-3",           # Experience level: 0-1, 1-3, 3-5, 5-8, 8+
         "difficulty": "medium",         # Interview difficulty: easy, medium, hard
         "skills": ["React", "TypeScript", "JavaScript"],  # Selected skills
-        "role": "frontend",             # Role: frontend, backend, fullstack, ml, data, mobile, devops
+        "role": "frontend",             # Role: frontend, backend, fullstack, ml, data, mobile, devops, security, general
         "profile_option": "existing",   # Profile type: existing or upload
         "profile_id": null              # Optional: existing profile ID if using existing
     }
@@ -74,67 +40,36 @@ def setup_interview(
     Response returns interview session ID with setup_id=0
     """
     try:
-        # Extract payload fields
-        setup_id = payload.get("setup_id", 0)
-        experience = payload.get("experience")
-        difficulty = payload.get("difficulty")
-        skills = payload.get("skills", [])
-        role = payload.get("role")
-        profile_option = payload.get("profile_option")
-        profile_id = payload.get("profile_id")
-
-        # Validation
-        if not all([experience, difficulty, role, profile_option]):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing required fields: experience, difficulty, role, profile_option"
-            )
-
-        VALID_EXPERIENCE = ["0-1", "1-3", "3-5", "5-8", "8+"]
-        VALID_DIFFICULTY = ["easy", "medium", "hard"]
-        VALID_ROLES = ["frontend", "backend", "fullstack", "ml", "data", "mobile", "devops", "general"]
-        VALID_PROFILE_OPTIONS = ["existing", "upload"]
-
-        if experience not in VALID_EXPERIENCE:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid experience level. Must be one of: {VALID_EXPERIENCE}"
-            )
-
-        if difficulty not in VALID_DIFFICULTY:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid difficulty. Must be one of: {VALID_DIFFICULTY}"
-            )
-
-        if role not in VALID_ROLES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid role. Must be one of: {VALID_ROLES}"
-            )
-
-        if profile_option not in VALID_PROFILE_OPTIONS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid profile_option. Must be one of: {VALID_PROFILE_OPTIONS}"
-            )
-
-        # TODO: Store interview session in database
-        # For now, just create a mock interview_id
         interview_id = f"interview_{current_user.id}_{int(datetime.utcnow().timestamp())}"
 
-        # Create response
+        record = Interview(
+            interview_id=interview_id,
+            user_id=current_user.id,
+            setup_id=payload.setup_id,
+            role=payload.role,
+            profile_option=payload.profile_option,
+            profile_id=payload.profile_id,
+            experience=payload.experience,
+            difficulty=payload.difficulty,
+            skills=payload.skills,
+            status="initialized",
+        )
+
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+
         response = {
             "interview_id": interview_id,
-            "setup_id": setup_id,
+            "setup_id": record.setup_id,
             "user_id": current_user.id,
-            "role": role,
-            "experience": experience,
-            "difficulty": difficulty,
-            "skills": skills,
-            "profile_option": profile_option,
-            "status": "initialized",
-            "started_at": datetime.utcnow().isoformat(),
+            "role": record.role,
+            "experience": record.experience,
+            "difficulty": record.difficulty,
+            "skills": record.skills,
+            "profile_option": record.profile_option,
+            "status": record.status,
+            "started_at": record.started_at,
             "message": "Interview session initialized successfully"
         }
 
@@ -157,11 +92,32 @@ def get_interview(
 ):
     """Get interview details by ID"""
     try:
-        # TODO: Fetch from database
+        interview = (
+            db.query(Interview)
+            .filter(
+                Interview.interview_id == interview_id,
+                Interview.user_id == current_user.id,
+            )
+            .first()
+        )
+
+        if not interview:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found",
+            )
+
         return {
-            "interview_id": interview_id,
+            "interview_id": interview.interview_id,
             "user_id": current_user.id,
-            "status": "initialized",
+            "setup_id": interview.setup_id,
+            "role": interview.role,
+            "experience": interview.experience,
+            "difficulty": interview.difficulty,
+            "skills": interview.skills,
+            "profile_option": interview.profile_option,
+            "status": interview.status,
+            "started_at": interview.started_at,
             "message": "Interview details retrieved"
         }
     except Exception as e:

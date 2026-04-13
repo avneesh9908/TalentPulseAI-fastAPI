@@ -15,3 +15,4 @@ class User(Base):
     skills      = relationship("Skill", back_populates="user")
     documents   = relationship("Document", back_populates="user")
     preferences = relationship("CareerPreferences", back_populates="user", uselist=False)
+    interviews  = relationship("Interview")

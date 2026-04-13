@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware  
 from app.routes import auth, user, interview
 from app.database.db import engine, Base
-import app.models.user 
+import app.models
 
 app = FastAPI()
 
