@@ -7,6 +7,13 @@ from app.database.deps import get_db
 from app.dependencies.auth import get_current_user
 from app.models.interview import Interview
 from app.models.user import User
+from app.schemas.resume_rag_schema import (
+    ContextRetrieveRequest,
+    ContextRetrieveResponse,
+    ResumeIndexRequest,
+    ResumeIndexResponse,
+)
+from app.services.resume_rag_service import ResumeRAGService
 from datetime import datetime
 from app.schemas.interview_schema import InterviewSetupRequest, InterviewSetupResponse
 
@@ -81,6 +88,70 @@ def setup_interview(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to setup interview: {str(e)}"
+        )
+
+
+@router.post("/resume/index", response_model=ResumeIndexResponse)
+def index_resume_for_rag(
+    payload: ResumeIndexRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Parse resume text/PDF and run chunking + embedding + vector indexing.
+    """
+    try:
+        service = ResumeRAGService()
+        resume_doc, chunk_count = service.index_resume(
+            db=db,
+            user_id=current_user.id,
+            payload=payload,
+        )
+
+        return {
+            "interview_id": payload.interview_id,
+            "resume_id": resume_doc.id,
+            "chunks_indexed": chunk_count,
+            "vector_collection": service.collection_name,
+            "status": "indexed",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Resume indexing failed: {str(e)}",
+        )
+
+
+@router.post("/context/retrieve", response_model=ContextRetrieveResponse)
+def retrieve_context_for_question_generation(
+    payload: ContextRetrieveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve top-k context chunks for question generation using setup payload fields.
+    """
+    try:
+        service = ResumeRAGService()
+        context_pack = service.retrieve_context(
+            db=db,
+            user_id=current_user.id,
+            payload=payload,
+        )
+
+        return {
+            "interview_id": payload.interview_id,
+            "retrieved_count": len(context_pack),
+            "context_pack": context_pack,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Context retrieval failed: {str(e)}",
         )
 
 
