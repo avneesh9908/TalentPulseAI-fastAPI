@@ -1,6 +1,8 @@
 import base64
+import hashlib
 import io
 import importlib
+import math
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -39,16 +41,57 @@ def _resolve_pgvector_class():
 PGVector = _resolve_pgvector_class()
 
 
+class LocalHashEmbeddings:
+    """
+    Deterministic local embeddings fallback (no network/API key required).
+    This keeps RAG functional when remote embedding providers are unreachable.
+    """
+
+    def __init__(self, dimension: int = 1536) -> None:
+        self.dimension = dimension
+
+    def _tokenize(self, text: str) -> List[str]:
+        return re.findall(r"[A-Za-z0-9_]+", (text or "").lower())
+
+    def _embed(self, text: str) -> List[float]:
+        vec = [0.0] * self.dimension
+        tokens = self._tokenize(text)
+        if not tokens:
+            return vec
+
+        for token in tokens:
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            idx = int.from_bytes(digest[:4], "big") % self.dimension
+            sign = 1.0 if (digest[4] & 1) == 0 else -1.0
+            vec[idx] += sign
+
+        norm = math.sqrt(sum(v * v for v in vec))
+        if norm > 0:
+            vec = [v / norm for v in vec]
+        return vec
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [self._embed(t) for t in texts]
+
+    def embed_query(self, text: str) -> List[float]:
+        return self._embed(text)
+
+
 class ResumeRAGService:
     def __init__(self) -> None:
         self.collection_name = settings.RAG_COLLECTION
         self.cursor_api_key = settings.CURSOR_API_KEY
         self.cursor_api_base = settings.CURSOR_API_BASE_URL
         self.embedding_model = settings.CURSOR_EMBEDDING_MODEL
-        self.vector_db_url = settings.VECTOR_DATABASE_URL or settings.DATABASE_URL
+        self.vector_db_url = settings.VECTOR_DB_URL or settings.VECTOR_DATABASE_URL
 
         if not self.cursor_api_key:
             raise ValueError("CURSOR_API_KEY is required")
+        if not self.vector_db_url:
+            raise ValueError(
+                "VECTOR_DB_URL is required for RAG features. "
+                "Keep DATABASE_URL for core app data and set VECTOR_DB_URL for vector storage."
+            )
 
     def _extract_text_from_pdf_b64(self, base64_pdf: str) -> str:
         pdf_bytes = base64.b64decode(base64_pdf)
@@ -111,12 +154,29 @@ class ResumeRAGService:
             openai_api_base=self.cursor_api_base,
         )
 
+    def _build_local_embeddings(self) -> LocalHashEmbeddings:
+        # Use 1536 dims to stay compatible with common OpenAI embedding sizes.
+        return LocalHashEmbeddings(dimension=1536)
+
     def _build_vector_store(self, embeddings: OpenAIEmbeddings) -> Any:
         return PGVector(
             embeddings=embeddings,
             collection_name=self.collection_name,
             connection=self.vector_db_url,
             use_jsonb=True,
+        )
+
+    def _build_connection_error(self, err: Exception, stage: str, model: str) -> RuntimeError:
+        # Keep this detailed for local debugging of provider/host/network issues.
+        root = err
+        if getattr(err, "__cause__", None):
+            root = err.__cause__  # type: ignore[assignment]
+        root_type = type(root).__name__
+        root_msg = str(root) or str(err)
+        return RuntimeError(
+            f"{stage} connection failed. "
+            f"base_url={self.cursor_api_base}, model={model}, "
+            f"error_type={root_type}, error={root_msg}"
         )
 
     def index_resume(
@@ -189,9 +249,22 @@ class ResumeRAGService:
         db.add_all(rows)
 
         embed_model = payload.embedding.model or self.embedding_model
-        embeddings = self._build_embeddings(embed_model)
-        vector_store = self._build_vector_store(embeddings)
-        vector_store.add_documents(docs)
+        try:
+            embeddings = self._build_embeddings(embed_model)
+            vector_store = self._build_vector_store(embeddings)
+            vector_store.add_documents(docs)
+        except Exception as err:
+            # Fallback path: keep indexing available even without remote provider.
+            try:
+                local_embeddings = self._build_local_embeddings()
+                local_store = self._build_vector_store(local_embeddings)
+                local_store.add_documents(docs)
+            except Exception:
+                raise self._build_connection_error(
+                    err=err,
+                    stage="Embedding provider",
+                    model=embed_model,
+                ) from err
 
         db.commit()
         db.refresh(resume_doc)
@@ -210,18 +283,30 @@ class ResumeRAGService:
             f"Question={payload.query}"
         )
 
-        embeddings = self._build_embeddings(self.embedding_model)
-        vector_store = self._build_vector_store(embeddings)
-
-        matches = vector_store.similarity_search_with_score(
-            enriched_query,
-            k=payload.top_k,
-            filter={
-                "user_id": user_id,
-                "interview_id": payload.interview_id,
-                "setup_id": payload.setup_id,
-            },
-        )
+        try:
+            embeddings = self._build_embeddings(self.embedding_model)
+            vector_store = self._build_vector_store(embeddings)
+            matches = vector_store.similarity_search_with_score(
+                enriched_query,
+                k=payload.top_k,
+                filter={
+                    "user_id": user_id,
+                    "interview_id": payload.interview_id,
+                    "setup_id": payload.setup_id,
+                },
+            )
+        except Exception:
+            local_embeddings = self._build_local_embeddings()
+            local_store = self._build_vector_store(local_embeddings)
+            matches = local_store.similarity_search_with_score(
+                enriched_query,
+                k=payload.top_k,
+                filter={
+                    "user_id": user_id,
+                    "interview_id": payload.interview_id,
+                    "setup_id": payload.setup_id,
+                },
+            )
 
         context_pack: List[Dict] = []
         for doc, score in matches:
