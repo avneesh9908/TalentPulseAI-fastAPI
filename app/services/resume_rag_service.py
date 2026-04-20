@@ -87,11 +87,6 @@ class ResumeRAGService:
 
         if not self.cursor_api_key:
             raise ValueError("CURSOR_API_KEY is required")
-        if not self.vector_db_url:
-            raise ValueError(
-                "VECTOR_DB_URL is required for RAG features. "
-                "Keep DATABASE_URL for core app data and set VECTOR_DB_URL for vector storage."
-            )
 
     def _extract_text_from_pdf_b64(self, base64_pdf: str) -> str:
         pdf_bytes = base64.b64decode(base64_pdf)
@@ -159,6 +154,10 @@ class ResumeRAGService:
         return LocalHashEmbeddings(dimension=1536)
 
     def _build_vector_store(self, embeddings: OpenAIEmbeddings) -> Any:
+        if not self.vector_db_url:
+            raise RuntimeError(
+                "VECTOR_DB_URL is not configured; vector store disabled for this environment."
+            )
         return PGVector(
             embeddings=embeddings,
             collection_name=self.collection_name,
@@ -184,7 +183,7 @@ class ResumeRAGService:
         db: Session,
         user_id: int,
         payload: ResumeIndexRequest,
-    ) -> Tuple[ResumeDocument, int]:
+    ) -> Tuple[ResumeDocument, int, bool]:
         raw_text = self._normalize_resume_text(payload)
         sections = self._parse_sections(raw_text)
         parsed_summary = self._extract_summary(raw_text, payload.skills)
@@ -249,6 +248,7 @@ class ResumeRAGService:
         db.add_all(rows)
 
         embed_model = payload.embedding.model or self.embedding_model
+        vector_indexed = True
         try:
             embeddings = self._build_embeddings(embed_model)
             vector_store = self._build_vector_store(embeddings)
@@ -259,17 +259,61 @@ class ResumeRAGService:
                 local_embeddings = self._build_local_embeddings()
                 local_store = self._build_vector_store(local_embeddings)
                 local_store.add_documents(docs)
-            except Exception:
-                raise self._build_connection_error(
-                    err=err,
-                    stage="Embedding provider",
-                    model=embed_model,
-                ) from err
+            except Exception as fallback_err:
+                # Graceful degradation: keep resume/chunk records so interview can proceed
+                # even when vector db is unavailable.
+                vector_indexed = False
+                print(
+                    "[ResumeRAGService] Vector indexing unavailable; continuing without vectors. "
+                    f"primary_error={self._build_connection_error(err=err, stage='Embedding provider', model=embed_model)} "
+                    f"fallback_error={fallback_err}"
+                )
 
         db.commit()
         db.refresh(resume_doc)
 
-        return resume_doc, len(docs)
+        return resume_doc, len(docs), vector_indexed
+
+    def _fallback_context_from_chunks(
+        self,
+        db: Session,
+        user_id: int,
+        payload: ContextRetrieveRequest,
+    ) -> List[Dict]:
+        resume_doc = (
+            db.query(ResumeDocument)
+            .filter(
+                ResumeDocument.user_id == user_id,
+                ResumeDocument.interview_id == payload.interview_id,
+                ResumeDocument.setup_id == payload.setup_id,
+            )
+            .order_by(ResumeDocument.id.desc())
+            .first()
+        )
+
+        if not resume_doc:
+            return []
+
+        chunk_rows = (
+            db.query(ResumeChunk)
+            .filter(ResumeChunk.resume_document_id == resume_doc.id)
+            .order_by(ResumeChunk.chunk_index.asc())
+            .limit(payload.top_k)
+            .all()
+        )
+
+        context_pack: List[Dict] = []
+        for row in chunk_rows:
+            context_pack.append(
+                {
+                    "chunk_id": row.id,
+                    "section": row.section,
+                    "score": 0.0,
+                    "text": row.chunk_text,
+                    "metadata": row.metadata_json or {},
+                }
+            )
+        return context_pack
 
     def retrieve_context(
         self,
@@ -295,18 +339,25 @@ class ResumeRAGService:
                     "setup_id": payload.setup_id,
                 },
             )
-        except Exception:
-            local_embeddings = self._build_local_embeddings()
-            local_store = self._build_vector_store(local_embeddings)
-            matches = local_store.similarity_search_with_score(
-                enriched_query,
-                k=payload.top_k,
-                filter={
-                    "user_id": user_id,
-                    "interview_id": payload.interview_id,
-                    "setup_id": payload.setup_id,
-                },
-            )
+        except Exception as remote_err:
+            try:
+                local_embeddings = self._build_local_embeddings()
+                local_store = self._build_vector_store(local_embeddings)
+                matches = local_store.similarity_search_with_score(
+                    enriched_query,
+                    k=payload.top_k,
+                    filter={
+                        "user_id": user_id,
+                        "interview_id": payload.interview_id,
+                        "setup_id": payload.setup_id,
+                    },
+                )
+            except Exception as local_err:
+                print(
+                    "[ResumeRAGService] Context retrieval fallback to SQL chunks. "
+                    f"remote_error={remote_err}; local_error={local_err}"
+                )
+                return self._fallback_context_from_chunks(db=db, user_id=user_id, payload=payload)
 
         context_pack: List[Dict] = []
         for doc, score in matches:

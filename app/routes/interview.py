@@ -15,9 +15,110 @@ from app.schemas.resume_rag_schema import (
 )
 from app.services.resume_rag_service import ResumeRAGService
 from datetime import datetime
+import re
 from app.schemas.interview_schema import InterviewSetupRequest, InterviewSetupResponse
 
 router = APIRouter()
+
+
+def _answer_words(answer: str) -> int:
+    return len(re.findall(r"\b[\w'-]+\b", answer.lower()))
+
+
+def _score_single_answer(answer: str, skills: list[str]) -> dict:
+    text = (answer or "").strip()
+    if not text:
+        return {
+            "score": 0,
+            "feedback": "No answer captured. Add a clear response with an example.",
+        }
+
+    words = _answer_words(text)
+    structure_markers = ["because", "for example", "tradeoff", "challenge", "result", "impact"]
+    technical_markers = [s.lower() for s in skills[:8] if s]
+    structure_hits = sum(1 for marker in structure_markers if marker in text.lower())
+    technical_hits = sum(1 for marker in technical_markers if marker and marker in text.lower())
+
+    depth_score = min(1.0, words / 90.0)
+    structure_score = min(1.0, structure_hits / 3.0)
+    technical_score = min(1.0, technical_hits / 2.0) if technical_markers else 0.6
+
+    total = int(round((depth_score * 0.5 + structure_score * 0.25 + technical_score * 0.25) * 100))
+    if total >= 80:
+        feedback = "Strong response with solid depth and good technical clarity."
+    elif total >= 60:
+        feedback = "Good baseline. Add one concrete metric/result to strengthen impact."
+    else:
+        feedback = "Too brief or generic. Use STAR format and include technical specifics."
+
+    return {"score": total, "feedback": feedback}
+
+
+def _build_interview_feedback(answers: dict, skills: list[str]) -> dict:
+    answer_items = list(answers.items())
+    per_question = []
+    for key, value in answer_items:
+        raw = " ".join(value) if isinstance(value, list) else str(value or "")
+        scored = _score_single_answer(raw, skills)
+        per_question.append(
+            {
+                "question_id": key,
+                "score": scored["score"],
+                "feedback": scored["feedback"],
+                "word_count": _answer_words(raw),
+            }
+        )
+
+    if not per_question:
+        return {
+            "score": 0,
+            "strengths": [],
+            "improvements": ["No answers were submitted. Try the interview again with full responses."],
+            "overall_feedback": "No responses were captured.",
+            "question_feedback": [],
+            "next_steps": [
+                "Practice answering with STAR format.",
+                "Speak 60-120 seconds per question.",
+            ],
+        }
+
+    avg_score = int(round(sum(item["score"] for item in per_question) / len(per_question)))
+    avg_words = int(round(sum(item["word_count"] for item in per_question) / len(per_question)))
+    answered_with_depth = sum(1 for item in per_question if item["word_count"] >= 45)
+
+    strengths = []
+    improvements = []
+    if avg_score >= 75:
+        strengths.append("Responses show strong technical depth and clear communication.")
+    if answered_with_depth >= max(1, len(per_question) // 2):
+        strengths.append("Most answers include enough detail to evaluate your experience.")
+    if skills:
+        strengths.append(f"Relevant skills were covered: {', '.join(skills[:4])}.")
+
+    if avg_words < 45:
+        improvements.append("Increase answer depth: target 60-120 words per question.")
+    if any(item["score"] < 60 for item in per_question):
+        improvements.append("Strengthen weaker answers using a Situation-Task-Action-Result structure.")
+    improvements.append("Add measurable outcomes (latency, scale, revenue, accuracy) to improve credibility.")
+
+    level = "excellent" if avg_score >= 80 else "good" if avg_score >= 65 else "developing"
+    overall_feedback = (
+        f"Overall performance is {level}. You scored {avg_score}/100. "
+        f"Average answer length was {avg_words} words."
+    )
+
+    return {
+        "score": avg_score,
+        "strengths": strengths[:3],
+        "improvements": improvements[:3],
+        "overall_feedback": overall_feedback,
+        "question_feedback": per_question,
+        "next_steps": [
+            "Do one timed mock round focusing on weaker questions.",
+            "Prepare concise project stories with metrics and trade-offs.",
+            "Review top role-specific concepts before your next interview.",
+        ],
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +203,7 @@ def index_resume_for_rag(
     """
     try:
         service = ResumeRAGService()
-        resume_doc, chunk_count = service.index_resume(
+        resume_doc, chunk_count, vector_indexed = service.index_resume(
             db=db,
             user_id=current_user.id,
             payload=payload,
@@ -113,7 +214,7 @@ def index_resume_for_rag(
             "resume_id": resume_doc.id,
             "chunks_indexed": chunk_count,
             "vector_collection": service.collection_name,
-            "status": "indexed",
+            "status": "indexed" if vector_indexed else "indexed_without_vectors",
         }
     except HTTPException:
         raise
@@ -236,13 +337,34 @@ def submit_interview(
         answers = payload.get("answers", {})
         completed_at = payload.get("completed_at")
 
-        # TODO: Store results, calculate score, update status
+        interview = (
+            db.query(Interview)
+            .filter(
+                Interview.interview_id == interview_id,
+                Interview.user_id == current_user.id,
+            )
+            .first()
+        )
+        if not interview:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Interview not found",
+            )
+
+        feedback = _build_interview_feedback(answers, interview.skills or [])
+        interview.status = "submitted"
+        db.commit()
+
         return {
             "interview_id": interview_id,
             "status": "submitted",
-            "score": 0,  # TODO: Calculate actual score
-            "message": "Interview submitted successfully"
+            "score": feedback["score"],
+            "completed_at": completed_at or datetime.utcnow().isoformat(),
+            "message": "Interview submitted successfully",
+            "feedback": feedback,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
